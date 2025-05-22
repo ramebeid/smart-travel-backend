@@ -31,3 +31,12 @@ def fetch_google_places(city, interests):
 
     print(f"[Google Places] Returning {len(results)} places for {city}")
     return results
+
+    # TEMPORARY MOCK until review scraping is added
+def get_reviews_for_place(place_id):
+    return [
+        "This is my favorite place ever!",
+        "Amazing experience, will return again.",
+        "Great for kids and families.",
+        "Tasty food, excellent local flavors."
+    ]
