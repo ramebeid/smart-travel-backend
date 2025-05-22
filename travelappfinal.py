@@ -4,6 +4,8 @@ import openai
 import os
 from places_utils import fetch_google_places
 from dotenv import load_dotenv
+from smart_filter import filter_places, inject_must_see_places
+
 
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -20,7 +22,10 @@ def plan_trip():
         interests = data.get("interests", [])
         avoid_crowds = data.get("avoid_crowds", False)
 
-        places = fetch_google_places(city, interests)
+        places = fetch_google_places(city, GOOGLE_PLACES_API_KEY)
+        smart_places = filter_places(places)
+        smart_places = inject_must_see_places(city, smart_places)
+
         cleaned_places = list(set([p for p in places if len(p) > 10]))
 
         if not cleaned_places:
