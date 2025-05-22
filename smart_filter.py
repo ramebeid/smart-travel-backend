@@ -1,5 +1,6 @@
 # smart_filter.py
 
+import os
 from typing import List, Dict
 import openai
 from places_utils import get_reviews_for_place
