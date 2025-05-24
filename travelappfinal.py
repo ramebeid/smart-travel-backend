@@ -1,17 +1,16 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
-from datetime import timedelta, datetime
+from datetime import datetime, timedelta
 from places_utils import fetch_google_places, get_commute_time_minutes
 from smart_filter import filter_places, inject_must_see_places
 
 app = Flask(__name__)
 CORS(app)
 
-def format_time(minutes_since_8am):
-    base = datetime.strptime("08:00", "%H:%M")
-    new_time = base + timedelta(minutes=minutes_since_8am)
-    return new_time.strftime("%I:%M %p")
+def format_time(minutes_after_8am):
+    start = datetime.strptime("08:00", "%H:%M")
+    return (start + timedelta(minutes=minutes_after_8am)).strftime("%I:%M %p")
 
 @app.route("/plan", methods=["POST"])
 def plan():
@@ -22,63 +21,73 @@ def plan():
         interests = data.get("interests", [])
         avoid_crowds = data.get("avoid_crowds", False)
 
-        print(f"📍 Planning {days} days in {city} | Interests: {interests} | Avoid crowds: {avoid_crowds}")
+        print(f"📍 {city} | Days: {days} | Interests: {interests} | Avoid Crowds: {avoid_crowds}")
 
+        # Fetch & filter places
         places = fetch_google_places(city)
-        if not places:
-            return jsonify({"error": "No places found"}), 400
-
         must_see = inject_must_see_places(city)
-        good_places = filter_places(places, interests, avoid_crowds)
+        filtered = filter_places(places, interests, avoid_crowds)
 
         all_places = []
         seen = set()
-        for p in must_see + good_places:
+        for p in must_see + filtered:
             name = p.get("name")
-            if name not in seen:
+            if name and name not in seen:
                 all_places.append(p)
                 seen.add(name)
 
+        if not all_places:
+            return jsonify({"error": "No places found"}), 400
+
+        # Fallback if too few places
         if len(all_places) < days * 3:
-            all_places = all_places * ((days * 3) // len(all_places) + 1)
+            all_places *= (days * 3) // len(all_places) + 1
 
         itinerary = []
-        i = 0
+        index = 0
 
-        for day in range(days):
-            time_used = 0
-            day_plan = []
+        for d in range(days):
+            time = 0  # in minutes after 8:00 AM
+            plan = []
             last_place = None
-            meal_added = False
+            meals = {"lunch": False, "dinner": False}
 
-            while i < len(all_places) and time_used < 600:
-                place = all_places[i]
+            while index < len(all_places) and time < 600:  # 10 hours max
+                place = all_places[index]
                 commute = get_commute_time_minutes(last_place, place) if last_place else 0
-                visit_time = 90
+                visit_time = 90  # default visit time
                 total_time = commute + visit_time
 
-                if time_used + total_time > 600:
+                if time + total_time > 600:
                     break
 
-                current_time_label = format_time(time_used)
-                stop_type = "Restaurant" if "restaurant" in place.get("name", "").lower() else "Visit"
-                entry = f"{current_time_label}: {stop_type} {place['name']} ({place.get('rating', '?')}★)\n  👉 {place.get('formatted_address')}"
+                current_time = format_time(time + commute)
+                name = place["name"]
+                rating = place.get("rating", "?")
+                address = place.get("formatted_address", "")
+                tag = ""
 
-                if not meal_added and (time_used + commute) >= 240:
-                    entry = f"{current_time_label}: Lunch break at {place['name']} ({place.get('rating', '?')}★)\n  👉 {place.get('formatted_address')}"
-                    meal_added = True
+                # Add a meal stop near lunch or dinner
+                if not meals["lunch"] and (time + commute) >= 240:
+                    tag = "🍽️ Lunch at "
+                    meals["lunch"] = True
+                elif not meals["dinner"] and (time + commute) >= 600:
+                    tag = "🍽️ Dinner at "
+                    meals["dinner"] = True
+                elif "restaurant" in name.lower():
+                    tag = "🍽️ Meal: "
 
-                day_plan.append(entry)
-                time_used += total_time
+                plan.append(f"{current_time}: {tag}{name} ({rating}★)\n  👉 {address}")
+                time += total_time
                 last_place = place
-                i += 1
+                index += 1
 
-            itinerary.append(f"Day {day + 1}:\n" + "\n".join(day_plan))
+            itinerary.append(f"Day {d + 1}:\n" + "\n".join(plan))
 
         return jsonify({"itinerary": "\n\n".join(itinerary)})
 
     except Exception as e:
-        print("❌ ERROR in /plan:", str(e))
+        print("❌ ERROR:", e)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
