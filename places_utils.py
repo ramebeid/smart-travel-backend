@@ -11,7 +11,20 @@ def fetch_google_places(city):
     if response.status_code != 200:
         print("Google Places API error:", response.text)
         return []
-    return response.json().get("results", [])
+    all_places = response.json().get("results", [])
+
+    # Filter only high-quality, currently open places
+    filtered = []
+    for place in all_places:
+        if place.get("business_status") == "CLOSED_PERMANENTLY":
+            continue
+        if place.get("rating", 0) < 4.6:
+            continue
+        if place.get("user_ratings_total", 0) < 30:
+            continue
+        filtered.append(place)
+
+    return filtered
 
 def get_reviews_for_place(place_id):
     return [
