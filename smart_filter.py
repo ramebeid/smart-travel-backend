@@ -1,120 +1,54 @@
-import os
-from typing import List, Dict
-import openai
-from places_utils import get_reviews_for_place, get_commute_time_minutes
-from datetime import datetime, timedelta
+# smart_filter.py
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+import re
 
-# ---------- Visit Time Estimates ----------
-VISIT_DURATION = {
-    "museum": 120,
-    "tourist_attraction": 90,
-    "park": 45,
-    "restaurant": 75,
-    "cafe": 30,
-    "zoo": 90,
-    "shopping_mall": 60,
-    "playground": 45
-}
+# Must-see cultural landmarks per city
+def inject_must_see_places(city):
+    must_see = {
+        "paris": [
+            {"name": "Eiffel Tower", "rating": 4.7, "formatted_address": "Champ de Mars, 5 Av. Anatole France, 75007 Paris, France"},
+            {"name": "Louvre Museum", "rating": 4.8, "formatted_address": "Rue de Rivoli, 75001 Paris, France"}
+        ],
+        "cairo": [
+            {"name": "The Pyramids of Giza", "rating": 4.7, "formatted_address": "Al Haram, Giza Governorate, Egypt"},
+            {"name": "Egyptian Museum", "rating": 4.6, "formatted_address": "Tahrir Square, Cairo, Egypt"}
+        ],
+        "rome": [
+            {"name": "Colosseum", "rating": 4.7, "formatted_address": "Piazza del Colosseo, 1, 00184 Roma RM, Italy"},
+            {"name": "Pantheon", "rating": 4.8, "formatted_address": "Piazza della Rotonda, 00186 Roma RM, Italy"}
+        ]
+    }
+    return must_see.get(city.lower(), [])
 
-def filter_places(places: List[Dict]) -> List[Dict]:
-    filtered = []
+def filter_places(places, interests, avoid_crowds=False):
+    keywords = [w.lower() for w in interests]
+    good = []
     for place in places:
+        name = place.get("name", "").lower()
+        desc = place.get("formatted_address", "").lower()
         rating = place.get("rating", 0)
-        reviews_count = place.get("user_ratings_total", 0)
+        user_count = place.get("user_ratings_total", 0)
+        reviews = get_reviews_for_place(place.get("place_id", ""))
 
-        if rating <= 1.0 or reviews_count == 0:
+        if rating < 4.6 or user_count < 10:
+            continue
+        if any("worst" in r.lower() or "never again" in r.lower() for r in reviews):
+            continue
+        if keywords and not any(k in name or k in desc for k in keywords):
+            continue
+        if avoid_crowds and user_count > 1000:
+            continue
+        if not any("favorite" in r.lower() for r in reviews):
             continue
 
-        reviews = get_reviews_for_place(place["place_id"])
-        if not reviews:
-            continue
+        good.append(place)
+    return good
 
-        favorite_found = any("favorite" in r.lower() for r in reviews)
-        if not favorite_found:
-            sentiment = ask_gpt_sentiment(reviews)
-            if sentiment != "positive":
-                continue
-
-        if "restaurant" in place.get("types", []) or "cafe" in place.get("types", []):
-            place["cuisine"] = classify_cuisine(place["name"], reviews)
-
-        filtered.append(place)
-
-    return filtered
-
-def is_iconic(place):
-    name = place["name"].lower()
-    keywords = ["pyramid", "eiffel", "museum", "tower", "temple", "cathedral", "ruins", "palace"]
-    return any(kw in name for kw in keywords)
-
-def ask_gpt_sentiment(reviews: List[str]) -> str:
-    joined = "\n".join(reviews[:5])
-    prompt = f"""
-    You are an expert travel assistant. Classify the overall tone of these reviews:
-    {joined}
-    Is this place a good recommendation for a tourist? Answer only: positive, neutral, or negative.
-    """
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response["choices"][0]["message"]["content"].strip().lower()
-
-def classify_cuisine(name: str, reviews: List[str]) -> str:
-    joined = "\n".join(reviews[:3])
-    prompt = f"""
-    A restaurant is called "{name}". Here are a few recent reviews:
-    {joined}
-    What type of cuisine does this restaurant serve? Return a short answer like "Egyptian street food" or "Italian pasta restaurant".
-    """
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response["choices"][0]["message"]["content"].strip()
-
-def prepare_final_list(city: str, all_places: List[Dict]) -> List[Dict]:
-    must_sees = [p for p in all_places if is_iconic(p)]
-    hidden_gems = filter_places(all_places)
-    combined = list({p["name"]: p for p in (must_sees + hidden_gems)}.values())
-    return combined
-
-def generate_itinerary(places: List[Dict]) -> List[Dict]:
-    if not places:
-        return []
-
-    itinerary = []
-    current_time = datetime.strptime("10:00", "%H:%M")
-    end_time = datetime.strptime("19:00", "%H:%M")
-    current_location = places[0]
-
-    for idx, place in enumerate(places):
-        if idx > 0:
-            commute_minutes = get_commute_time_minutes(current_location, place)
-            current_time += timedelta(minutes=commute_minutes)
-
-        if current_time > end_time:
-            break
-
-        duration = estimate_duration(place)
-        itinerary.append({
-            "name": place["name"],
-            "type": place.get("types", []),
-            "start_time": current_time.strftime("%H:%M"),
-            "duration_min": duration,
-            "location": place.get("formatted_address", "")
-        })
-
-        current_time += timedelta(minutes=duration)
-        current_location = place
-
-    return itinerary
-
-def estimate_duration(place):
-    types = place.get("types", [])
-    for t in types:
-        if t in VISIT_DURATION:
-            return VISIT_DURATION[t]
-    return 60
+def get_reviews_for_place(place_id):
+    # Simulated for now
+    return [
+        "This was my favorite stop!",
+        "Incredible atmosphere, loved the food!",
+        "Our family had a great time, especially the kids.",
+        "Would definitely return."
+    ]
