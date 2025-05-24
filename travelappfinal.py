@@ -16,48 +16,46 @@ def plan():
         interests = data.get("interests", [])
         avoid_crowds = data.get("avoid_crowds", False)
 
-        print(f"🌍 Planning {days}-day trip to {city} | Interests: {interests} | Avoid crowds: {avoid_crowds}")
+        print(f"📍 Planning {days} days in {city} | Interests: {interests} | Avoid crowds: {avoid_crowds}")
 
         places = fetch_google_places(city)
         if not places:
             return jsonify({"error": "No places found"}), 400
 
         must_see = inject_must_see_places(city)
-        filtered = filter_places(places, interests, avoid_crowds)
+        good_places = filter_places(places, interests, avoid_crowds)
 
-        # Combine and deduplicate
+        all_places = []
         seen = set()
-        combined = []
-        for place in must_see + filtered:
-            name = place.get("name")
+        for p in must_see + good_places:
+            name = p.get("name")
             if name not in seen:
+                all_places.append(p)
                 seen.add(name)
-                combined.append(place)
 
-        # Build a simple itinerary
         itinerary = []
         i = 0
         for day in range(days):
             day_plan = []
             time_left = 10 * 60
-            while i < len(combined) and time_left > 60:
-                place = combined[i]
-                visit_time = 90
+            while i < len(all_places) and time_left > 90:
+                place = all_places[i]
                 commute = get_commute_time_minutes(day_plan[-1] if day_plan else place, place)
-                total = visit_time + commute
-                if total <= time_left:
+                visit_time = 90
+                total_time = visit_time + commute
+                if total_time <= time_left:
                     day_plan.append(place)
-                    time_left -= total
+                    time_left -= total_time
                 i += 1
 
             formatted = f"Day {day+1}:\n"
             for p in day_plan:
-                formatted += f"- {p.get('name')} ({p.get('rating')}★)\n  👉 {p.get('formatted_address')}\n"
+                formatted += f"- {p['name']} ({p.get('rating', '?')}★)\n  👉 {p.get('formatted_address')}\n"
             itinerary.append(formatted.strip())
 
         return jsonify({"itinerary": "\n\n".join(itinerary)})
     except Exception as e:
-        print("🔥 Error in /plan:", str(e))
+        print("❌ ERROR in /plan:", str(e))
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":

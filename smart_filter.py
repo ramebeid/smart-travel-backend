@@ -1,23 +1,26 @@
-# smart_filter.py
-
-import re
-
-# Automatically inject cultural must-see places using keywords
+def get_reviews_for_place(place_id):
+    # Dummy reviews (replace with real API if needed)
+    return [
+        "Our favorite stop!",
+        "Amazing experience.",
+        "Definitely coming back!",
+        "One of the best parts of the trip!"
+    ]
 
 def inject_must_see_places(city):
     from places_utils import fetch_google_places
     all_places = fetch_google_places(city)
-    must_keywords = ["museum", "monument", "castle", "cathedral", "temple", "palace", "pyramids"]
+    must_keywords = ["museum", "pyramids", "temple", "castle", "cathedral", "palace", "historic"]
     must_see = []
-    for place in all_places:
-        name = place.get("name", "").lower()
-        desc = place.get("formatted_address", "").lower()
+    for p in all_places:
+        name = p.get("name", "").lower()
+        desc = p.get("formatted_address", "").lower()
         if any(k in name or k in desc for k in must_keywords):
-            must_see.append(place)
+            must_see.append(p)
     return must_see[:4]
 
 def filter_places(places, interests, avoid_crowds=False):
-    keywords = [w.lower() for w in interests if w.strip()]
+    keywords = [k.lower() for k in interests if k.strip()]
     good = []
 
     for place in places:
@@ -39,13 +42,5 @@ def filter_places(places, interests, avoid_crowds=False):
         sorted_places = sorted(places, key=lambda x: x.get("rating", 0), reverse=True)
         good = sorted_places[:5]
 
-    print(f"✅ Final selection: {len(good)} out of {len(places)}")
+    print(f"✅ Final selection: {len(good)} / {len(places)}")
     return good
-
-def get_reviews_for_place(place_id):
-    return [
-        "This was my favorite stop!",
-        "Incredible atmosphere, loved the food!",
-        "Our family had a great time, especially the kids.",
-        "Would definitely return."
-    ]
