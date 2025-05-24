@@ -1,5 +1,3 @@
-# travelappfinal.py
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
@@ -18,7 +16,7 @@ def plan():
         interests = data.get("interests", [])
         avoid_crowds = data.get("avoid_crowds", False)
 
-        print(f"🌍 Received plan request for {city}, {days} day(s), interests: {interests}, avoid crowds: {avoid_crowds}")
+        print(f"🌍 Planning {days}-day trip to {city} | Interests: {interests} | Avoid crowds: {avoid_crowds}")
 
         places = fetch_google_places(city)
         if not places:
@@ -36,30 +34,28 @@ def plan():
                 seen.add(name)
                 combined.append(place)
 
-        # Build day-by-day itinerary with commute awareness
+        # Build a simple itinerary
         itinerary = []
         i = 0
         for day in range(days):
             day_plan = []
-            time_left = 10 * 60  # 10 hours
+            time_left = 10 * 60
             while i < len(combined) and time_left > 60:
                 place = combined[i]
-                visit_time = 90  # assume 1.5 hours per place
-                commute = get_commute_time_minutes(
-                    day_plan[-1] if day_plan else place, place)
+                visit_time = 90
+                commute = get_commute_time_minutes(day_plan[-1] if day_plan else place, place)
                 total = visit_time + commute
                 if total <= time_left:
                     day_plan.append(place)
                     time_left -= total
                 i += 1
 
-            formatted = f"\nDay {day+1}:\n"
+            formatted = f"Day {day+1}:\n"
             for p in day_plan:
                 formatted += f"- {p.get('name')} ({p.get('rating')}★)\n  👉 {p.get('formatted_address')}\n"
             itinerary.append(formatted.strip())
 
         return jsonify({"itinerary": "\n\n".join(itinerary)})
-
     except Exception as e:
         print("🔥 Error in /plan:", str(e))
         return jsonify({"error": str(e)}), 500
