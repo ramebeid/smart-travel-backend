@@ -1,11 +1,11 @@
 # smart_filter.py
 
 import re
-from places_utils import get_reviews_for_place
 
 # Automatically inject cultural must-see places using keywords
 
 def inject_must_see_places(city):
+    from places_utils import fetch_google_places  # move import locally to avoid circular import
     all_places = fetch_google_places(city)
     must_keywords = ["museum", "monument", "castle", "cathedral", "temple", "palace", "pyramids"]
     must_see = []
