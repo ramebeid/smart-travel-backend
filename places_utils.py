@@ -5,19 +5,25 @@ import requests
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY")
 
+# places_utils.py
+
+import os
+import requests
+
+GOOGLE_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY")
+
 def fetch_google_places(city):
     url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query=things+to+do+in+{city}&key={GOOGLE_API_KEY}"
     response = requests.get(url)
     if response.status_code != 200:
         print("Google Places API error:", response.text)
         return []
+
     all_places = response.json().get("results", [])
 
-    # Filter only high-quality, currently open places
+    # Updated filter logic: no longer skip CLOSED_PERMANENTLY
     filtered = []
     for place in all_places:
-        if place.get("business_status") == "CLOSED_PERMANENTLY":
-            continue
         if place.get("rating", 0) < 4.6:
             continue
         if place.get("user_ratings_total", 0) < 30:
@@ -25,6 +31,7 @@ def fetch_google_places(city):
         filtered.append(place)
 
     return filtered
+
 
 def get_reviews_for_place(place_id):
     return [
