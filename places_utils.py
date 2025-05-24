@@ -5,31 +5,33 @@ import requests
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY")
 
-# places_utils.py
-
-import os
-import requests
-
-GOOGLE_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY")
-
 def fetch_google_places(city):
     url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query=things+to+do+in+{city}&key={GOOGLE_API_KEY}"
+
+    # Debug logs
+    print("✅ Google API Key Present:", bool(GOOGLE_API_KEY))
+    print("📡 Hitting URL:", url)
+
     response = requests.get(url)
+    print("🌍 Google API raw response:")
+    print(response.text)
+
     if response.status_code != 200:
         print("Google Places API error:", response.text)
         return []
 
     all_places = response.json().get("results", [])
 
-    # Updated filter logic: no longer skip CLOSED_PERMANENTLY
+    # TEMPORARY: Relaxed filtering to debug better
     filtered = []
     for place in all_places:
-        if place.get("rating", 0) < 4.6:
+        if place.get("rating", 0) < 4.0:
             continue
-        if place.get("user_ratings_total", 0) < 30:
+        if place.get("user_ratings_total", 0) < 5:
             continue
         filtered.append(place)
 
+    print(f"✅ Final filtered places: {len(filtered)}")
     return filtered
 
 
@@ -40,6 +42,7 @@ def get_reviews_for_place(place_id):
         "Kids loved it, lots to do.",
         "Great local vibe and unique experience."
     ]
+
 
 def get_commute_time_minutes(origin, destination):
     origin_address = origin.get("formatted_address")
