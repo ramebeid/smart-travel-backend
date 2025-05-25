@@ -1,7 +1,11 @@
 import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from smart_filter import generate_gpt_itinerary, validate_itinerary_with_google
+
+# IMPORT THE ACTUAL FUNCTIONS YOU USE
+from places_utils import fetch_google_places
+from smart_filter import prepare_final_list, generate_itinerary
+
 
 app = Flask(__name__)
 CORS(app)
