@@ -1,15 +1,15 @@
 import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from places_utils import fetch_google_places
 from smart_filter import prepare_final_list, generate_itinerary
+from places_utils import search_google_place
 
 app = Flask(__name__)
 CORS(app)
 
 @app.route("/")
 def health():
-    return "Backend is alive!"
+    return "✅ Smart Travel Backend Running"
 
 @app.route("/plan", methods=["POST"])
 def plan():
@@ -19,7 +19,8 @@ def plan():
         if not city:
             return jsonify({"error": "Missing city"}), 400
 
-        places = fetch_google_places(city)
+        print(f"📍 Planning for: {city}")
+        places = search_google_place(city)
         if not places:
             return jsonify({"error": "No places found"}), 404
 
@@ -34,6 +35,7 @@ def plan():
         return jsonify({"itinerary": itinerary})
 
     except Exception as e:
+        print("❌ Error in /plan:", e)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
