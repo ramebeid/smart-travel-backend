@@ -1,50 +1,122 @@
+# smart_filter.py
+
 import os
+from typing import List, Dict
 import openai
-from places_utils import search_google_place
+from datetime import datetime, timedelta
+from places_utils import get_reviews_for_place, get_commute_time_minutes
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-def generate_gpt_itinerary(city, days, interests, avoid_crowds):
-    interest_text = ", ".join(interests) if interests else "general tourism"
-    avoid_text = "Avoid crowded spots" if avoid_crowds else "Include popular sites"
+VISIT_DURATION = {
+    "museum": 120,
+    "tourist_attraction": 90,
+    "park": 45,
+    "restaurant": 75,
+    "cafe": 30,
+    "zoo": 90,
+    "shopping_mall": 60,
+    "playground": 45
+}
 
+def filter_places(places: List[Dict]) -> List[Dict]:
+    filtered = []
+    for place in places:
+        rating = place.get("rating", 0)
+        reviews_count = place.get("user_ratings_total", 0)
+
+        if rating <= 1.0 or reviews_count == 0:
+            continue
+
+        reviews = get_reviews_for_place(place["place_id"])
+        if not reviews:
+            continue
+
+        favorite_found = any("favorite" in r.lower() for r in reviews)
+        if not favorite_found:
+            sentiment = ask_gpt_sentiment(reviews)
+            if sentiment != "positive":
+                continue
+
+        if "restaurant" in place.get("types", []) or "cafe" in place.get("types", []):
+            place["cuisine"] = classify_cuisine(place["name"], reviews)
+
+        filtered.append(place)
+
+    return filtered
+
+def is_iconic(place):
+    name = place["name"].lower()
+    keywords = ["pyramid", "eiffel", "museum", "tower", "temple", "cathedral", "ruins", "palace"]
+    return any(kw in name for kw in keywords)
+
+def ask_gpt_sentiment(reviews: List[str]) -> str:
+    joined = "\n".join(reviews[:5])
     prompt = f"""
-You are a smart local travel guide. Create a {days}-day hour-by-hour travel itinerary for a tourist visiting {city}. 
+    You are an expert travel assistant. Classify the overall tone of these reviews:
+    {joined}
+    Is this place a good recommendation for a tourist? Answer only: positive, neutral, or negative.
+    """
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response["choices"][0]["message"]["content"].strip().lower()
 
-Make it highly personalized based on these interests: {interest_text}. {avoid_text}. 
-Each day's plan should start at 10:00 and end around 18:30.
+def classify_cuisine(name: str, reviews: List[str]) -> str:
+    joined = "\n".join(reviews[:3])
+    prompt = f"""
+    A restaurant is called "{name}". Here are a few recent reviews:
+    {joined}
+    What type of cuisine does this restaurant serve? Return a short answer like "Egyptian street food" or "Italian pasta restaurant".
+    """
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response["choices"][0]["message"]["content"].strip()
 
-- Mention time before each entry (like “10:00 - Visit the Colosseum”)
-- Include famous landmarks AND hidden gems.
-- Recommend top local food stops (1 lunch + 1 café/snack per day)
-- Assume all places are within reasonable distance and account for commute.
-- Return the itinerary in plain text, organized by Day 1, Day 2, etc.
-"""
+def prepare_final_list(city: str, all_places: List[Dict]) -> List[Dict]:
+    must_sees = [p for p in all_places if is_iconic(p)]
+    hidden_gems = filter_places(all_places)
+    combined = list({p["name"]: p for p in (must_sees + hidden_gems)}.values())
+    return combined
 
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response["choices"][0]["message"]["content"]
-    except Exception as e:
-        print("GPT error:", str(e))
-        return None
+def generate_itinerary(places: List[Dict]) -> List[Dict]:
+    if not places:
+        return []
 
-def validate_itinerary_with_google(text, city):
-    lines = text.strip().split("\n")
-    validated = []
+    itinerary = []
+    current_time = datetime.strptime("10:00", "%H:%M")
+    end_time = datetime.strptime("19:00", "%H:%M")
+    current_location = places[0]
 
-    for line in lines:
-        if " - " in line:
-            time_part, activity = line.split(" - ", 1)
-            place_info = search_google_place(activity, city)
+    for idx, place in enumerate(places):
+        if idx > 0:
+            commute_minutes = get_commute_time_minutes(current_location, place)
+            current_time += timedelta(minutes=commute_minutes)
 
-            if place_info:
-                validated.append(f"{time_part} - {activity} ({place_info})")
-            else:
-                validated.append(f"{time_part} - {activity}")
-        else:
-            validated.append(line)
+        if current_time > end_time:
+            break
 
-    return "\n".join(validated)
+        duration = estimate_duration(place)
+        itinerary.append({
+            "name": place["name"],
+            "type": place.get("types", []),
+            "start_time": current_time.strftime("%H:%M"),
+            "duration_min": duration,
+            "location": place.get("formatted_address", ""),
+            "cuisine": place.get("cuisine", "")
+        })
+
+        current_time += timedelta(minutes=duration)
+        current_location = place
+
+    return itinerary
+
+def estimate_duration(place):
+    types = place.get("types", [])
+    for t in types:
+        if t in VISIT_DURATION:
+            return VISIT_DURATION[t]
+    return 60
