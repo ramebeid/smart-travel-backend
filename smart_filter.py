@@ -1,57 +1,121 @@
 import os
-import openai
-from places_utils import search_google_place, has_acceptable_reviews
+from datetime import datetime, timedelta
+from typing import List, Dict
+from openai import OpenAI
+from places_utils import get_reviews_for_place, get_commute_time_minutes
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def generate_gpt_itinerary(city, days, interests, avoid_crowds):
-    interest_str = ", ".join(interests) if interests else "general tourism"
+VISIT_DURATION = {
+    "museum": 120,
+    "tourist_attraction": 90,
+    "park": 45,
+    "restaurant": 75,
+    "cafe": 30,
+    "zoo": 90,
+    "shopping_mall": 60,
+    "playground": 45
+}
+
+def is_iconic(place):
+    name = place["name"].lower()
+    keywords = ["pyramid", "eiffel", "museum", "tower", "temple", "cathedral", "ruins", "palace"]
+    return any(k in name for k in keywords)
+
+def ask_gpt_sentiment(reviews: List[str]) -> str:
     prompt = f"""
-You are a smart local guide. Create a {days}-day travel itinerary for {city} based on these interests: {interest_str}.
-Make the plan realistic by considering distances and time spent at each location.
-Avoid crowds if the user requests it: {'Yes' if avoid_crowds else 'No'}.
-Include food stops (local cuisine) and cultural landmarks. Return only clean JSON like this:
-
-[
-  {{
-    "name": "Eiffel Tower",
-    "type": "landmark",
-    "start_time": "10:00",
-    "duration_min": 90,
-    "location": "Champ de Mars, Paris"
-  }},
-  ...
-]
+    You are an expert travel assistant. Classify the overall tone of these reviews:
+    {"".join(reviews[:5])}
+    Is this place a good recommendation for a tourist? Answer only: positive, neutral, or negative.
     """
-
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4",
         messages=[{"role": "user", "content": prompt}]
     )
-    content = response.choices[0].message.content.strip()
-    try:
-        return eval(content)  # assuming GPT returns a list of dicts
-    except Exception as e:
-        print("❌ GPT output error:", e)
+    return response.choices[0].message.content.strip().lower()
+
+def classify_cuisine(name: str, reviews: List[str]) -> str:
+    prompt = f"""
+    A restaurant is called "{name}". Here are a few recent reviews:
+    {"".join(reviews[:3])}
+    What type of cuisine does this restaurant serve? Return a short answer like "Egyptian street food" or "Italian pasta restaurant".
+    """
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content.strip()
+
+def filter_places(places: List[Dict]) -> List[Dict]:
+    filtered = []
+    for place in places:
+        rating = place.get("rating", 0)
+        reviews_count = place.get("user_ratings_total", 0)
+
+        if rating < 4.6 or reviews_count == 0:
+            continue
+
+        reviews = get_reviews_for_place(place["place_id"])
+        if not reviews:
+            continue
+
+        if any("1 star" in r.lower() or "terrible" in r.lower() or "never again" in r.lower() for r in reviews):
+            continue
+
+        favorite_found = any("favorite" in r.lower() for r in reviews)
+        if not favorite_found:
+            sentiment = ask_gpt_sentiment(reviews)
+            if sentiment != "positive":
+                continue
+
+        if "restaurant" in place.get("types", []) or "cafe" in place.get("types", []):
+            place["cuisine"] = classify_cuisine(place["name"], reviews)
+
+        filtered.append(place)
+
+    return filtered
+
+def prepare_final_list(city: str, all_places: List[Dict]) -> List[Dict]:
+    must_sees = [p for p in all_places if is_iconic(p)]
+    hidden_gems = filter_places(all_places)
+    combined = list({p["name"]: p for p in (must_sees + hidden_gems)}.values())
+    return combined
+
+def generate_itinerary(places: List[Dict]) -> List[Dict]:
+    if not places:
         return []
 
-def validate_itinerary_with_google(itinerary):
-    valid = []
-    for item in itinerary:
-        place_data = search_google_place(item["name"])
-        if place_data and has_acceptable_reviews(place_data):
-            item["location"] = place_data.get("formatted_address", item.get("location", ""))
-            item["cuisine"] = classify_cuisine(item["name"]) if "restaurant" in item.get("type", "") else ""
-            valid.append(item)
-    return valid
+    itinerary = []
+    current_time = datetime.strptime("10:00", "%H:%M")
+    end_time = datetime.strptime("19:00", "%H:%M")
+    current_location = places[0]
 
-def classify_cuisine(name):
-    prompt = f"What type of cuisine is served at '{name}'? Respond with a short phrase like 'Italian pizza' or 'Egyptian kebab'."
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response.choices[0].message.content.strip()
-    except:
-        return ""
+    for idx, place in enumerate(places):
+        if idx > 0:
+            commute_minutes = get_commute_time_minutes(current_location, place)
+            current_time += timedelta(minutes=commute_minutes)
+
+        if current_time > end_time:
+            break
+
+        duration = estimate_duration(place)
+        itinerary.append({
+            "name": place["name"],
+            "type": place.get("types", []),
+            "cuisine": place.get("cuisine", ""),
+            "start_time": current_time.strftime("%H:%M"),
+            "duration_min": duration,
+            "location": place.get("formatted_address", "")
+        })
+
+        current_time += timedelta(minutes=duration)
+        current_location = place
+
+    return itinerary
+
+def estimate_duration(place):
+    types = place.get("types", [])
+    for t in types:
+        if t in VISIT_DURATION:
+            return VISIT_DURATION[t]
+    return 60

@@ -3,35 +3,46 @@ import requests
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY")
 
-def search_google_place(name):
+def fetch_google_places(city):
     url = "https://places.googleapis.com/v1/places:searchText"
     headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": GOOGLE_API_KEY,
-        "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.id"
+        "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.types,places.id,places.location"
     }
-    payload = {"textQuery": name, "maxResultCount": 1, "languageCode": "en"}
+    payload = {
+        "textQuery": f"top things to do in {city}",
+        "maxResultCount": 20,
+        "languageCode": "en"
+    }
 
-    res = requests.post(url, headers=headers, json=payload)
-    if res.status_code != 200:
-        print("Google Place Search Error:", res.text)
-        return None
+    response = requests.post(url, headers=headers, json=payload)
+    if response.status_code != 200:
+        print("Google Places API error:", response.text)
+        return []
 
-    places = res.json().get("places", [])
-    return places[0] if places else None
+    places = response.json().get("places", [])
+    results = []
+    for p in places:
+        results.append({
+            "name": p.get("displayName", {}).get("text"),
+            "formatted_address": p.get("formattedAddress"),
+            "rating": p.get("rating"),
+            "user_ratings_total": p.get("userRatingCount"),
+            "types": p.get("types", []),
+            "place_id": p.get("id")
+        })
 
-def has_acceptable_reviews(place):
-    rating = place.get("rating", 0)
-    if rating < 4.6:
-        return False
-
-    reviews = get_reviews_for_place(place["id"])
-    return not any("1 star" in r.lower() or "never again" in r.lower() for r in reviews)
+    return results
 
 def get_reviews_for_place(place_id):
     return [
-        "Absolutely loved it!",
-        "Amazing spot, would go again.",
-        "Best local food, great vibe!",
-        "My favorite place on the trip."
+        "This was my favorite stop in the whole city!",
+        "Wonderful location, highly recommend.",
+        "Kids loved it, lots to do.",
+        "Great local vibe and unique experience.",
+        "One of my top memories from the trip."
     ]
+
+def get_commute_time_minutes(origin, destination):
+    return 15  # Default value for simplicity
