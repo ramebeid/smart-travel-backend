@@ -1,43 +1,120 @@
-from places_utils import fetch_google_places
+import os
+from typing import List, Dict
+import openai
+from places_utils import get_reviews_for_place, get_commute_time_minutes
+from datetime import datetime, timedelta
 
-def inject_must_see_places(city):
-    all_places = fetch_google_places(city)
-    must_keywords = ["museum", "temple", "pyramids", "landmark", "cathedral", "castle", "palace", "heritage", "historic"]
-    must_see = []
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-    for place in all_places:
-        name = place.get("name", "").lower()
-        desc = place.get("formatted_address", "").lower()
-        if any(k in name or k in desc for k in must_keywords):
-            must_see.append(place)
+# ---------- Visit Time Estimates ----------
+VISIT_DURATION = {
+    "museum": 120,
+    "tourist_attraction": 90,
+    "park": 45,
+    "restaurant": 75,
+    "cafe": 30,
+    "zoo": 90,
+    "shopping_mall": 60,
+    "playground": 45
+}
 
-    return must_see[:3]
+def filter_places(places: List[Dict]) -> List[Dict]:
+    filtered = []
+    for place in places:
+        rating = place.get("rating", 0)
+        reviews_count = place.get("user_ratings_total", 0)
 
-def get_reviews_for_place(_):
-    return [
-        "Great spot", "Favorite part of the trip", "Absolutely amazing!", "Must see again"
-    ]
-
-def filter_places(places, interests, avoid_crowds):
-    interest_keywords = [kw.lower() for kw in interests if kw.strip()]
-    good = []
-
-    for p in places:
-        name = p.get("name", "").lower()
-        desc = p.get("formatted_address", "").lower()
-        rating = p.get("rating", 0)
-        reviews = get_reviews_for_place(p.get("place_id", ""))
-        total = p.get("user_ratings_total", 0)
-
-        if rating < 4.6 or total < 10:
-            continue
-        if any(bad in r.lower() for r in reviews for bad in ["worst", "never again", "dirty", "closed", "avoid"]):
-            continue
-        if avoid_crowds and total > 1000:
-            continue
-        if interest_keywords and not any(k in name or k in desc for k in interest_keywords):
+        if rating <= 1.0 or reviews_count == 0:
             continue
 
-        good.append(p)
+        reviews = get_reviews_for_place(place["place_id"])
+        if not reviews:
+            continue
 
-    return good[:20]
+        favorite_found = any("favorite" in r.lower() for r in reviews)
+        if not favorite_found:
+            sentiment = ask_gpt_sentiment(reviews)
+            if sentiment != "positive":
+                continue
+
+        if "restaurant" in place.get("types", []) or "cafe" in place.get("types", []):
+            place["cuisine"] = classify_cuisine(place["name"], reviews)
+
+        filtered.append(place)
+
+    return filtered
+
+def is_iconic(place):
+    name = place["name"].lower()
+    keywords = ["pyramid", "eiffel", "museum", "tower", "temple", "cathedral", "ruins", "palace"]
+    return any(kw in name for kw in keywords)
+
+def ask_gpt_sentiment(reviews: List[str]) -> str:
+    joined = "\n".join(reviews[:5])
+    prompt = f"""
+    You are an expert travel assistant. Classify the overall tone of these reviews:
+    {joined}
+    Is this place a good recommendation for a tourist? Answer only: positive, neutral, or negative.
+    """
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response["choices"][0]["message"]["content"].strip().lower()
+
+def classify_cuisine(name: str, reviews: List[str]) -> str:
+    joined = "\n".join(reviews[:3])
+    prompt = f"""
+    A restaurant is called "{name}". Here are a few recent reviews:
+    {joined}
+    What type of cuisine does this restaurant serve? Return a short answer like "Egyptian street food" or "Italian pasta restaurant".
+    """
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response["choices"][0]["message"]["content"].strip()
+
+def prepare_final_list(city: str, all_places: List[Dict]) -> List[Dict]:
+    must_sees = [p for p in all_places if is_iconic(p)]
+    hidden_gems = filter_places(all_places)
+    combined = list({p["name"]: p for p in (must_sees + hidden_gems)}.values())
+    return combined
+
+def generate_itinerary(places: List[Dict]) -> List[Dict]:
+    if not places:
+        return []
+
+    itinerary = []
+    current_time = datetime.strptime("10:00", "%H:%M")
+    end_time = datetime.strptime("19:00", "%H:%M")
+    current_location = places[0]
+
+    for idx, place in enumerate(places):
+        if idx > 0:
+            commute_minutes = get_commute_time_minutes(current_location, place)
+            current_time += timedelta(minutes=commute_minutes)
+
+        if current_time > end_time:
+            break
+
+        duration = estimate_duration(place)
+        itinerary.append({
+            "name": place["name"],
+            "type": place.get("types", []),
+            "start_time": current_time.strftime("%H:%M"),
+            "duration_min": duration,
+            "location": place.get("formatted_address", "")
+        })
+
+        current_time += timedelta(minutes=duration)
+        current_location = place
+
+    return itinerary
+
+def estimate_duration(place):
+    types = place.get("types", [])
+    for t in types:
+        if t in VISIT_DURATION:
+            return VISIT_DURATION[t]
+    return 60
